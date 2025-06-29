@@ -141,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
             video.addEventListener('canplaythrough', () => resolve(video), { once: true });
             video.addEventListener('error', (e) => {
                 console.warn(`No se pudo precargar el video: ${src}`, e);
-                preloadedVideos.delete(src);
+                preloadedVideos.delete(src); 
                 reject(e);
             }, { once: true });
         });
@@ -151,7 +151,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return promise;
     }
 
-    // --- Funciones de Video y Transición ---
     async function playVideo(videoElement, loop = false) {
         if (videoElement) {
             if (videoElement.loop === true && loop === true && !videoElement.paused && videoElement.currentTime > 0) {
@@ -281,37 +280,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             if (endedVideo === transitionVideoElement) {
-                // --- INICIO DE CORRECCIÓN: Encadenamiento de transiciones desde modo nocturno ---
-                if (actionToExecute.type === 'PLAY_SLIDE2_DAY_VIDEO' && nextActionAfterNightToDay) {
-                    const originalAction = nextActionAfterNightToDay;
-                    nextActionAfterNightToDay = null;
-                    isChristmasNightMode = false;
-
-                    let nextTransitionVideoSrc = null;
-                    let finalPendingAction = null;
-                    
-                    if (originalAction.type === 'SLIDE_TO_MENU_WITH_TRANSITION') {
-                        nextTransitionVideoSrc = originalAction.exitTransition;
-                        finalPendingAction = { type: 'SHOW_MENU_AFTER_EXIT_TRANSITION' };
-                    } else if (originalAction.type === 'SLIDE_TO_SLIDE_WITH_TRANSITION') {
-                        nextTransitionVideoSrc = originalAction.slideTransitionVideo;
-                        finalPendingAction = { type: 'PLAY_SLIDE_AFTER_SLIDE_TRANSITION' };
-                        targetSceneAfterTransition = { slideId: originalAction.nextSlideId, slideAnimation: originalAction.nextSlideAnimation };
-                    }
-
-                    if (nextTransitionVideoSrc && finalPendingAction) {
-                        pendingAction = finalPendingAction; 
-                        
-                        // Prepara y reproduce la *segunda* transición sin llamar a transitionToState
-                        await prepareVideoElement(transitionVideoElement, nextTransitionVideoSrc);
-                        transitionVideoElement.removeEventListener('ended', onVideoEnded);
-                        transitionVideoElement.addEventListener('ended', onVideoEnded, { once: true });
-                        await playVideo(transitionVideoElement, false);
-                        return; // Salimos para evitar que el código de abajo se ejecute.
-                    }
-                }
-                // --- FIN DE CORRECCIÓN ---
-                
                 setTimeout(() => {
                     transitionVideoLayer.classList.remove('active');
                     transitionVideoElement.classList.remove('visible');
@@ -343,7 +311,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     finalScenePromise = Promise.resolve();
 
+                // --- INICIO DEL CAMBIO: LÓGICA CORREGIDA PARA SALIR DEL MODO NOCTURNO ---
                 } else if (actionToExecute.type === 'PLAY_SLIDE2_DAY_VIDEO') {
+                    // 1. Estabilizar la escena mostrando el video de día.
                     slideVideoLayer.classList.add('active');
                     await prepareVideoElement(currentSlideVideoElement, SLIDE2_DAY_VIDEO);
                     nextSlideVideoElement.classList.remove('visible');
@@ -352,16 +322,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     await playVideo(currentSceneVideoElement, true);
                     isChristmasNightMode = false;
                     toggleChristmasLightButton.textContent = "Encender la Navidad";
-                    setControlsWaitingState(false);
 
-                    const slide2Content = document.querySelector('.slide-specific-content[data-content-for-slide="slide2"]');
-                    if (slide2Content) {
-                        const titleContainer = slide2Content.querySelector('.slide-title-container');
-                        if (titleContainer) {
-                            titleContainer.classList.add('visible');
+                    // 2. Comprobar si hay una acción encadenada (ir a otro slide, menú, etc.).
+                    if (nextActionAfterNightToDay) {
+                        const originalAction = { ...nextActionAfterNightToDay };
+                        nextActionAfterNightToDay = null; // Limpiar la acción pendiente.
+                        // 3. Iniciar la transición REAL que el usuario quería, AHORA que la escena de día es visible.
+                        // Usamos un pequeño timeout para asegurar que el navegador renderice el video de día antes de empezar la nueva transición.
+                        setTimeout(() => transitionToState(originalAction), 50);
+                    } else {
+                        // Si no había acción encadenada (el usuario solo quería apagar las luces).
+                        setControlsWaitingState(false);
+                        const slide2Content = document.querySelector('.slide-specific-content[data-content-for-slide="slide2"]');
+                        if (slide2Content) {
+                            const titleContainer = slide2Content.querySelector('.slide-title-container');
+                            if (titleContainer) {
+                                titleContainer.classList.add('visible');
+                            }
                         }
                     }
                     finalScenePromise = Promise.resolve();
+                // --- FIN DEL CAMBIO ---
                     
                 }
                 else if (actionToExecute.type === 'PLAY_SLIDE_AFTER_SLIDE_TRANSITION' && targetSceneAfterTransition) {
