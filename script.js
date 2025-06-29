@@ -1,75 +1,12 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const appContainer = document.getElementById('app-container');
-
-    // === INICIO DE CAMBIOS: LÓGICA DE ESCALADO Y PANTALLA COMPLETA ===
-    
-    function scaleAndCenterApp() {
-        const targetWidth = 1600;
-        const targetHeight = 900;
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
-
-        const scaleX = windowWidth / targetWidth;
-        const scaleY = windowHeight / targetHeight;
-        
-        const scale = Math.min(scaleX, scaleY);
-
-        if (appContainer) {
-            appContainer.style.transform = `translate(-50%, -50%) scale(${scale})`;
-        }
-    }
-
-    const mobilePrompt = document.getElementById('mobile-fullscreen-prompt');
-    const enterFullscreenButton = document.getElementById('enter-fullscreen-button');
-    let appInitialized = false;
-
-    async function requestFullscreenAndLockOrientation() {
-        try {
-            if (document.documentElement.requestFullscreen) {
-                await document.documentElement.requestFullscreen();
-            } else if (document.documentElement.mozRequestFullScreen) { /* Firefox */
-                await document.documentElement.mozRequestFullScreen();
-            } else if (document.documentElement.webkitRequestFullscreen) { /* Chrome, Safari & Opera */
-                await document.documentElement.webkitRequestFullscreen();
-            } else if (document.documentElement.msRequestFullscreen) { /* IE/Edge */
-                await document.documentElement.msRequestFullscreen();
-            }
-            
-            if (screen.orientation && screen.orientation.lock) {
-                await screen.orientation.lock('landscape');
-            }
-        } catch (err) {
-            console.error(`Error al intentar entrar en pantalla completa o bloquear orientación: ${err.message}`);
-        }
-    }
-
-    if (enterFullscreenButton) {
-        enterFullscreenButton.addEventListener('click', async () => {
-            await requestFullscreenAndLockOrientation();
-        });
-    }
-
-    document.addEventListener('fullscreenchange', () => {
-        if (document.fullscreenElement) {
-            if (mobilePrompt) mobilePrompt.style.display = 'none';
-            appContainer.style.display = 'block';
-            scaleAndCenterApp();
-            if (!appInitialized) {
-                initializeApp();
-                appInitialized = true;
-            }
-        } else {
-            if (mobilePrompt) mobilePrompt.style.display = 'flex';
-            appContainer.style.display = 'none';
-        }
-    });
-
-    // === FIN DE CAMBIOS: LÓGICA DE ESCALADO Y PANTALLA COMPLETA ===
-
     // --- Elementos del DOM ---
+    const appContainer = document.getElementById('app-container');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
     const staticFrameImage = document.getElementById('static-frame-image');
     const overlayImageLayer = document.getElementById('overlay-image-layer');
-    const lajasOverlayImage = document.getElementById('lajas-overlay-image');
+    const lajasOverlayImage = document.getElementById('lajas-overlay-image'); // Asumo que existe, aunque no se usaba
     const menuVideoElement = document.getElementById('menu-video-element');
     const transitionVideoElement = document.getElementById('transition-video-element');
     const slideVideoBuffer1 = document.getElementById('slide-video-buffer-1');
@@ -124,6 +61,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const SLIDE2_TO_NIGHT_TRANSITION = "videos/slide2-to-night-transition.mp4";
     const NIGHT_TO_SLIDE2_TRANSITION = "videos/night-to-slide2-transition.mp4";
 
+    // === INICIO DE CAMBIOS: SISTEMA DE PRECARGA TOTAL ===
+    
     const preloadedVideos = new Map();
 
     function preloadVideo(src) {
@@ -131,26 +70,139 @@ document.addEventListener('DOMContentLoaded', () => {
             return preloadedVideos.get(src) || Promise.resolve();
         }
 
-        const video = document.createElement('video');
-        video.src = src;
-        video.muted = true;
-        video.playsInline = true;
-        video.preload = 'auto';
-
         const promise = new Promise((resolve, reject) => {
+            const video = document.createElement('video');
+            video.src = src;
+            video.muted = true;
+            video.playsInline = true;
+            video.preload = 'auto';
             video.addEventListener('canplaythrough', () => resolve(video), { once: true });
             video.addEventListener('error', (e) => {
                 console.warn(`No se pudo precargar el video: ${src}`, e);
-                preloadedVideos.delete(src); 
-                reject(e);
+                // No rechazamos la promesa principal para no detener la carga completa,
+                // pero sí la promesa individual para que el `catch` funcione.
+                reject(e); 
             }, { once: true });
+            video.load();
         });
 
-        video.load();
         preloadedVideos.set(src, promise);
         return promise;
     }
 
+    async function preloadAllAssets() {
+        const videoSrcSet = new Set();
+        
+        // Recolectar todas las URLs de video del DOM
+        document.querySelectorAll('video').forEach(v => {
+            const source = v.querySelector('source');
+            // Usamos la propiedad `src` del elemento, que resuelve la URL completa
+            if (source && source.src) videoSrcSet.add(source.getAttribute('src'));
+        });
+        document.querySelectorAll('[data-animation], [data-entry-transition], [data-exit-transition], [data-next-animation], [data-prev-animation], [data-transition-video]').forEach(el => {
+            Object.keys(el.dataset).forEach(key => {
+                if (el.dataset[key] && el.dataset[key].endsWith('.mp4')) {
+                    videoSrcSet.add(el.dataset[key]);
+                }
+            });
+        });
+        // Añadir videos hardcodeados
+        [SLIDE2_NIGHT_VIDEO, SLIDE2_TO_NIGHT_TRANSITION, NIGHT_TO_SLIDE2_TRANSITION, INTRO_TO_MENU_TRANSITION_VIDEO, MENU_TO_INTRO_TRANSITION_VIDEO].forEach(src => videoSrcSet.add(src));
+
+        const allVideoUrls = Array.from(videoSrcSet).filter(Boolean); // Filtra nulos o strings vacíos
+        let loadedCount = 0;
+        const totalCount = allVideoUrls.length;
+
+        if (totalCount === 0) {
+            if(progressText) progressText.textContent = "No se encontraron videos para cargar.";
+            if (loadingOverlay) loadingOverlay.classList.add('hidden');
+            return;
+        }
+        
+        if (loadingOverlay) loadingOverlay.style.display = 'flex';
+
+        const promises = allVideoUrls.map(url =>
+            preloadVideo(url)
+                .catch(e => e) // No dejar que un error detenga a los demás
+                .then(() => {
+                    loadedCount++;
+                    const percentage = Math.round((loadedCount / totalCount) * 100);
+                    if (progressBar) progressBar.style.width = `${percentage}%`;
+                    if (progressText) progressText.textContent = `${percentage}%`;
+                })
+        );
+
+        await Promise.all(promises);
+
+        // Pequeña pausa para que el usuario vea el 100%
+        setTimeout(() => {
+            if (loadingOverlay) loadingOverlay.classList.add('hidden');
+        }, 300);
+    }
+    
+    // === FIN DE CAMBIOS: SISTEMA DE PRECARGA TOTAL ===
+
+
+    // === INICIO DE CAMBIOS: LÓGICA DE MÓVILES Y PANTALLA COMPLETA (MODIFICADA) ===
+    
+    const mobilePrompt = document.getElementById('mobile-fullscreen-prompt');
+    const enterFullscreenButton = document.getElementById('enter-fullscreen-button');
+    let appInitialized = false;
+
+    function scaleAndCenterApp() {
+        const targetWidth = 1600;
+        const targetHeight = 900;
+        const windowWidth = window.innerWidth;
+        const windowHeight = window.innerHeight;
+        const scale = Math.min(windowWidth / targetWidth, windowHeight / targetHeight);
+        if (appContainer) {
+            appContainer.style.transform = `translate(-50%, -50%) scale(${scale})`;
+        }
+    }
+
+    async function requestFullscreenAndLockOrientation() {
+        try {
+            if (document.documentElement.requestFullscreen) {
+                await document.documentElement.requestFullscreen();
+            } else if (document.documentElement.webkitRequestFullscreen) { /* Chrome, Safari & Opera */
+                await document.documentElement.webkitRequestFullscreen();
+            }
+            // Añadir otros prefijos si es necesario
+            
+            if (screen.orientation && screen.orientation.lock) {
+                await screen.orientation.lock('landscape');
+            }
+        } catch (err) {
+            console.error(`Error al intentar entrar en pantalla completa o bloquear orientación: ${err.message}`);
+        }
+    }
+
+    if (enterFullscreenButton) {
+        enterFullscreenButton.addEventListener('click', requestFullscreenAndLockOrientation);
+    }
+    
+    document.addEventListener('fullscreenchange', () => {
+        const isFullscreen = !!document.fullscreenElement;
+        if (isFullscreen) {
+            if (mobilePrompt) mobilePrompt.style.display = 'none';
+            if (!appInitialized) {
+                // Si entramos en pantalla completa (en móvil), AHORA sí mostramos el loader y cargamos todo
+                preloadAllAssets().then(() => {
+                     startExperience();
+                     appInitialized = true;
+                });
+            }
+        } else {
+             // Si el usuario sale de pantalla completa, volvemos a mostrar el prompt
+            if (mobilePrompt && window.innerWidth < 1025) mobilePrompt.style.display = 'flex';
+            if (appContainer) appContainer.style.display = 'none';
+        }
+    });
+    
+    // === FIN DE CAMBIOS: LÓGICA MÓVIL ===
+
+
+    // --- Funciones de Video y Transición ---
     async function playVideo(videoElement, loop = false) {
         if (videoElement) {
             if (videoElement.loop === true && loop === true && !videoElement.paused && videoElement.currentTime > 0) {
@@ -186,81 +238,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function prepareVideoElement(videoEl, src) {
-        return new Promise(async (resolve, reject) => {
-            if (!videoEl) { reject(new Error(`prepareVideoElement: videoEl es null (intentando cargar ${src})`)); return; }
-            if (!src) {
-                resolve(); return;
-            }
-            if (!preloadedVideos.has(src)) {
-                try {
-                    await preloadVideo(src);
-                } catch(e) {}
-            }
+        // Esta función ahora es mucho más simple. Asumimos que el video está en caché.
+        return new Promise((resolve, reject) => {
+            if (!videoEl) { reject(new Error(`prepareVideoElement: videoEl es null`)); return; }
+            if (!src) { resolve(); return; }
+
             let sourceTag = videoEl.querySelector('source');
             if (!sourceTag) {
                 sourceTag = document.createElement('source');
                 sourceTag.type = 'video/mp4';
                 videoEl.appendChild(sourceTag);
             }
-            const currentFullSrc = (sourceTag.getAttribute('src')) ? new URL(sourceTag.getAttribute('src'), document.baseURI).href : "";
+            
+            // Comprobar si la fuente necesita ser actualizada
+            const currentFullSrc = videoEl.currentSrc;
             const newFullSrc = new URL(src, document.baseURI).href;
-            if (currentFullSrc !== newFullSrc || videoEl.readyState < HTMLMediaElement.HAVE_METADATA) {
+
+            if (currentFullSrc !== newFullSrc) {
                 sourceTag.setAttribute('src', src);
                 videoEl.load();
             }
-            try {
-                await ensureVideoCanPlay(videoEl);
-                resolve();
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-     async function ensureVideoCanPlay(videoElement) {
-        return new Promise((resolve, reject) => {
-            if (!videoElement) {
-                reject(new Error("Video element es null"));
-                return;
-            }
-            if (videoElement.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
-                resolve();
-                return;
-            }
-            const sourceEl = videoElement.querySelector('source');
-            let videoSrc = videoElement.currentSrc;
-             if (!videoSrc && sourceEl && sourceEl.src) {
-                 videoSrc = new URL(sourceEl.src, document.baseURI).href;
-             }
-            if (!videoSrc) {
-                resolve();
-                return;
-            }
-            const failTimeout = setTimeout(() => {
-                 cleanUpListeners();
-                 resolve();
-            }, 5000);
-            const cleanUpListeners = () => {
-                videoElement.removeEventListener('canplaythrough', canPlayThroughHandler);
-                videoElement.removeEventListener('error', errorHandler);
-                clearTimeout(failTimeout);
-            };
-            const canPlayThroughHandler = () => {
-                cleanUpListeners();
-                resolve();
-            };
-            const errorHandler = (e) => {
-                console.error(`[ensureVideoCanPlay] Error de video ${videoElement.id} (${videoSrc}):`, e, videoElement.error);
-                cleanUpListeners();
-                reject(videoElement.error || e);
-            };
-            videoElement.addEventListener('canplaythrough', canPlayThroughHandler, { once: true });
-            videoElement.addEventListener('error', errorHandler, { once: true });
-            if (videoElement.networkState === HTMLMediaElement.NETWORK_NO_SOURCE ||
-                videoElement.networkState === HTMLMediaElement.NETWORK_IDLE ||
-                videoElement.readyState < HTMLMediaElement.HAVE_METADATA) {
-                 videoElement.load();
-            }
+            // Ya no es necesario `ensureVideoCanPlay` porque todo está precargado
+            resolve();
         });
     }
 
@@ -280,6 +279,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             if (endedVideo === transitionVideoElement) {
+                if (actionToExecute.type === 'PLAY_SLIDE2_DAY_VIDEO' && nextActionAfterNightToDay) {
+                    const originalAction = nextActionAfterNightToDay;
+                    nextActionAfterNightToDay = null; 
+                    isChristmasNightMode = false;
+                    
+                    transitionToState(originalAction);
+                    return; 
+                }
+                
                 setTimeout(() => {
                     transitionVideoLayer.classList.remove('active');
                     transitionVideoElement.classList.remove('visible');
@@ -311,9 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     finalScenePromise = Promise.resolve();
 
-                // --- INICIO DEL CAMBIO: LÓGICA CORREGIDA PARA SALIR DEL MODO NOCTURNO ---
                 } else if (actionToExecute.type === 'PLAY_SLIDE2_DAY_VIDEO') {
-                    // 1. Estabilizar la escena mostrando el video de día.
                     slideVideoLayer.classList.add('active');
                     await prepareVideoElement(currentSlideVideoElement, SLIDE2_DAY_VIDEO);
                     nextSlideVideoElement.classList.remove('visible');
@@ -322,27 +328,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     await playVideo(currentSceneVideoElement, true);
                     isChristmasNightMode = false;
                     toggleChristmasLightButton.textContent = "Encender la Navidad";
+                    setControlsWaitingState(false);
 
-                    // 2. Comprobar si hay una acción encadenada (ir a otro slide, menú, etc.).
-                    if (nextActionAfterNightToDay) {
-                        const originalAction = { ...nextActionAfterNightToDay };
-                        nextActionAfterNightToDay = null; // Limpiar la acción pendiente.
-                        // 3. Iniciar la transición REAL que el usuario quería, AHORA que la escena de día es visible.
-                        // Usamos un pequeño timeout para asegurar que el navegador renderice el video de día antes de empezar la nueva transición.
-                        setTimeout(() => transitionToState(originalAction), 50);
-                    } else {
-                        // Si no había acción encadenada (el usuario solo quería apagar las luces).
-                        setControlsWaitingState(false);
-                        const slide2Content = document.querySelector('.slide-specific-content[data-content-for-slide="slide2"]');
-                        if (slide2Content) {
-                            const titleContainer = slide2Content.querySelector('.slide-title-container');
-                            if (titleContainer) {
-                                titleContainer.classList.add('visible');
-                            }
+                    const slide2Content = document.querySelector('.slide-specific-content[data-content-for-slide="slide2"]');
+                    if (slide2Content) {
+                        const titleContainer = slide2Content.querySelector('.slide-title-container');
+                        if (titleContainer) {
+                            titleContainer.classList.add('visible');
                         }
                     }
                     finalScenePromise = Promise.resolve();
-                // --- FIN DEL CAMBIO ---
                     
                 }
                 else if (actionToExecute.type === 'PLAY_SLIDE_AFTER_SLIDE_TRANSITION' && targetSceneAfterTransition) {
@@ -408,7 +403,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (videoToPrepare) {
             try {
-                await ensureVideoCanPlay(videoToPrepare);
                 [menuVideoLayer, slideVideoLayer, transitionVideoLayer, introVideoLayer].forEach(layer => {
                     if (videoToPrepare.closest('.video-layer') !== layer) {
                          layer.classList.remove('active');
@@ -427,7 +421,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentSceneVideoElement = videoToPrepare;
                 await playVideo(currentSceneVideoElement, loopVideo);
             } catch(e) {
-                console.error(`Error en ensureVideoCanPlay para executeStandardPendingAction (${action.type}):`, e);
+                console.error(`Error en executeStandardPendingAction (${action.type}):`, e);
             }
         }
         if (action.type === 'SLIDE_TO_MENU_NO_TRANSITION') actuallyShowMenuUi(false);
@@ -461,32 +455,14 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleChristmasLightButton
         ];
 
-        if (waiting) {
-            mainControls.forEach(btn => {
-                if (btn) btn.classList.add('waiting');
-            });
-            if (currentSlideId) {
-                const activeSlideContent = document.querySelector(`.slide-specific-content[data-content-for-slide="${currentSlideId}"].active`);
-                if (activeSlideContent) {
-                    activeSlideContent.querySelectorAll('.circle-button').forEach(btn => {
-                         if (btn) btn.classList.add('waiting');
-                    });
-                }
+        const action = waiting ? 'add' : 'remove';
+        mainControls.forEach(btn => btn && btn.classList[action]('waiting'));
+
+        if (currentSlideId) {
+            const activeSlideContent = document.querySelector(`.slide-specific-content[data-content-for-slide="${currentSlideId}"].active`);
+            if (activeSlideContent) {
+                activeSlideContent.querySelectorAll('.circle-button').forEach(btn => btn && btn.classList[action]('waiting'));
             }
-        } else {
-            setTimeout(() => {
-                mainControls.forEach(btn => {
-                    if (btn) btn.classList.remove('waiting');
-                });
-                if (currentSlideId) {
-                    const activeSlideContent = document.querySelector(`.slide-specific-content[data-content-for-slide="${currentSlideId}"].active`);
-                    if (activeSlideContent) {
-                        activeSlideContent.querySelectorAll('.circle-button').forEach(btn => {
-                             if (btn) btn.classList.remove('waiting');
-                        });
-                    }
-                }
-            }, 50);
         }
     }
 
@@ -527,71 +503,60 @@ document.addEventListener('DOMContentLoaded', () => {
         let subsequentPendingAction = null;
         let layerToActivateForNextVideo = null;
         
-        try {
-            if (action.type === 'MENU_TO_SLIDE_WITH_TRANSITION') {
-                await preloadVideo(action.entryTransition);
-                videoToWaitFor = menuVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                targetSceneAfterTransition = { slideId: action.slideId, slideAnimation: action.slideAnimation };
-                await prepareVideoElement(transitionVideoElement, action.entryTransition);
-                subsequentPendingAction = { type: 'PLAY_SLIDE_AFTER_ENTRY_TRANSITION' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'SLIDE_TO_MENU_WITH_TRANSITION') {
-                await preloadVideo(action.exitTransition);
-                videoToWaitFor = currentSceneVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                await prepareVideoElement(transitionVideoElement, action.exitTransition);
-                subsequentPendingAction = { type: 'SHOW_MENU_AFTER_EXIT_TRANSITION' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'SLIDE_TO_SLIDE_WITH_TRANSITION') {
-                await preloadVideo(action.slideTransitionVideo);
-                videoToWaitFor = currentSceneVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                targetSceneAfterTransition = { slideId: action.nextSlideId, slideAnimation: action.nextSlideAnimation };
-                await prepareVideoElement(transitionVideoElement, action.slideTransitionVideo);
-                subsequentPendingAction = { type: 'PLAY_SLIDE_AFTER_SLIDE_TRANSITION' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'INTRO_TO_MENU_WITH_VIDEO_SEQUENCE') {
-                await preloadVideo(INTRO_TO_MENU_TRANSITION_VIDEO);
-                videoToWaitFor = introVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                await prepareVideoElement(transitionVideoElement, INTRO_TO_MENU_TRANSITION_VIDEO);
-                subsequentPendingAction = { type: 'PLAY_MENU_AFTER_INTRO_TRANSITION' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'MENU_TO_INTRO_WITH_VIDEO_SEQUENCE') {
-                await preloadVideo(MENU_TO_INTRO_TRANSITION_VIDEO);
-                videoToWaitFor = menuVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                await prepareVideoElement(transitionVideoElement, MENU_TO_INTRO_TRANSITION_VIDEO);
-                subsequentPendingAction = { type: 'PLAY_INTRO_AFTER_MENU_TRANSITION' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'SLIDE2_DAY_TO_NIGHT') {
-                await preloadVideo(SLIDE2_TO_NIGHT_TRANSITION);
-                videoToWaitFor = currentSceneVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                await prepareVideoElement(transitionVideoElement, SLIDE2_TO_NIGHT_TRANSITION);
-                subsequentPendingAction = { type: 'PLAY_SLIDE2_NIGHT_VIDEO' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'SLIDE2_NIGHT_TO_DAY') {
-                await preloadVideo(NIGHT_TO_SLIDE2_TRANSITION);
-                videoToWaitFor = currentSceneVideoElement;
-                videoToPlayAfterInitialEnd = transitionVideoElement;
-                await prepareVideoElement(transitionVideoElement, NIGHT_TO_SLIDE2_TRANSITION);
-                subsequentPendingAction = { type: 'PLAY_SLIDE2_DAY_VIDEO' };
-                layerToActivateForNextVideo = transitionVideoLayer;
-            } else if (action.type === 'SLIDE_TO_SLIDE_NO_TRANSITION_BUFFER_SWAP') {
-                await preloadVideo(action.animationSrc);
-                videoToWaitFor = currentSceneVideoElement;
-                await prepareVideoElement(nextSlideVideoElement, action.animationSrc);
-                layerToActivateForNextVideo = slideVideoLayer;
-                subsequentPendingAction = action;
-            } else if (action.type === 'SLIDE_TO_MENU_NO_TRANSITION') {
-                videoToWaitFor = currentSceneVideoElement;
-                layerToActivateForNextVideo = menuVideoLayer;
-                subsequentPendingAction = action;
-            }
-        } catch (e) {
-            console.error("Error durante la precarga en transitionToState, continuando de todos modos...", e);
+        // La precarga ya está hecha, solo preparamos los elementos de video.
+        if (action.type === 'MENU_TO_SLIDE_WITH_TRANSITION') {
+            videoToWaitFor = menuVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            targetSceneAfterTransition = { slideId: action.slideId, slideAnimation: action.slideAnimation };
+            await prepareVideoElement(transitionVideoElement, action.entryTransition);
+            subsequentPendingAction = { type: 'PLAY_SLIDE_AFTER_ENTRY_TRANSITION' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'SLIDE_TO_MENU_WITH_TRANSITION') {
+            videoToWaitFor = currentSceneVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            await prepareVideoElement(transitionVideoElement, action.exitTransition);
+            subsequentPendingAction = { type: 'SHOW_MENU_AFTER_EXIT_TRANSITION' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'SLIDE_TO_SLIDE_WITH_TRANSITION') {
+            videoToWaitFor = currentSceneVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            targetSceneAfterTransition = { slideId: action.nextSlideId, slideAnimation: action.nextSlideAnimation };
+            await prepareVideoElement(transitionVideoElement, action.slideTransitionVideo);
+            subsequentPendingAction = { type: 'PLAY_SLIDE_AFTER_SLIDE_TRANSITION' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'INTRO_TO_MENU_WITH_VIDEO_SEQUENCE') {
+            videoToWaitFor = introVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            await prepareVideoElement(transitionVideoElement, INTRO_TO_MENU_TRANSITION_VIDEO);
+            subsequentPendingAction = { type: 'PLAY_MENU_AFTER_INTRO_TRANSITION' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'MENU_TO_INTRO_WITH_VIDEO_SEQUENCE') {
+            videoToWaitFor = menuVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            await prepareVideoElement(transitionVideoElement, MENU_TO_INTRO_TRANSITION_VIDEO);
+            subsequentPendingAction = { type: 'PLAY_INTRO_AFTER_MENU_TRANSITION' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'SLIDE2_DAY_TO_NIGHT') {
+            videoToWaitFor = currentSceneVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            await prepareVideoElement(transitionVideoElement, SLIDE2_TO_NIGHT_TRANSITION);
+            subsequentPendingAction = { type: 'PLAY_SLIDE2_NIGHT_VIDEO' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'SLIDE2_NIGHT_TO_DAY') {
+            videoToWaitFor = currentSceneVideoElement;
+            videoToPlayAfterInitialEnd = transitionVideoElement;
+            await prepareVideoElement(transitionVideoElement, NIGHT_TO_SLIDE2_TRANSITION);
+            subsequentPendingAction = { type: 'PLAY_SLIDE2_DAY_VIDEO' };
+            layerToActivateForNextVideo = transitionVideoLayer;
+        } else if (action.type === 'SLIDE_TO_SLIDE_NO_TRANSITION_BUFFER_SWAP') {
+            videoToWaitFor = currentSceneVideoElement;
+            await prepareVideoElement(nextSlideVideoElement, action.animationSrc);
+            layerToActivateForNextVideo = slideVideoLayer;
+            subsequentPendingAction = action;
+        } else if (action.type === 'SLIDE_TO_MENU_NO_TRANSITION') {
+            videoToWaitFor = currentSceneVideoElement;
+            layerToActivateForNextVideo = menuVideoLayer;
+            subsequentPendingAction = action;
         }
 
         if (videoToWaitFor && (videoToWaitFor.currentSrc || (videoToWaitFor.querySelector('source') && videoToWaitFor.querySelector('source').src)) ) {
@@ -774,11 +739,6 @@ document.addEventListener('DOMContentLoaded', () => {
             introDisclaimer.classList.add('visible');
         }, 50);
 
-        setTimeout(() => {
-            preloadVideo(INTRO_TO_MENU_TRANSITION_VIDEO);
-            preloadVideo("videos/menu-background.mp4");
-        }, 500);
-        
         setControlsWaitingState(false);
     }
 
@@ -816,14 +776,6 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             if (speechBubble) speechBubble.classList.add('visible');
         }, 100);
-
-        setTimeout(() => {
-            allMenuButtons.forEach(button => {
-                preloadVideo(button.dataset.entryTransition);
-                preloadVideo(button.dataset.animation);
-            });
-            preloadVideo(MENU_TO_INTRO_TRANSITION_VIDEO);
-        }, 500);
 
         setControlsWaitingState(false);
     }
@@ -888,22 +840,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (slideId === 'slide2' && !isChristmasNightMode) {
                  if (toggleChristmasLightButton) toggleChristmasLightButton.textContent = "Encender la Navidad";
             }
-
-            setTimeout(() => {
-                if (nextButton) {
-                    preloadVideo(nextButton.dataset.transitionVideo);
-                    preloadVideo(nextButton.dataset.nextAnimation);
-                }
-                if (prevButton) {
-                    preloadVideo(prevButton.dataset.transitionVideo);
-                    preloadVideo(prevButton.dataset.prevAnimation);
-                }
-                const menuButtonForCurrentSlide = document.querySelector(`.menu-button[data-slide-id="${currentSlideId}"]`);
-                if (menuButtonForCurrentSlide) {
-                    preloadVideo(menuButtonForCurrentSlide.dataset.exitTransition);
-                }
-            }, 500);
-
         } else {
             slideInteractiveElements.style.display = 'none';
             slideBackToMenuButton.style.display = 'none';
@@ -1047,7 +983,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    async function initializeApp() {
+    // --- FUNCIÓN DE INICIO PRINCIPAL (MODIFICADA) ---
+    function startExperience() {
+        if(appContainer) appContainer.style.display = 'block';
         scaleAndCenterApp();
         window.addEventListener('resize', scaleAndCenterApp);
 
@@ -1060,23 +998,25 @@ document.addEventListener('DOMContentLoaded', () => {
         staticFrameImage.classList.remove('blurred');
         overlayImageLayer.classList.remove('visible');
         overlayImageLayer.classList.remove('hiding');
-        try {
-            const introSource = introVideoElement.querySelector('source');
-            if (introSource && introSource.src) {
-                 await ensureVideoCanPlay(introVideoElement);
-            }
-            actuallyShowIntroUi();
-        } catch (e) {
-            console.error("[initializeApp] Error during initial video preparation or showing intro UI:", e);
-            actuallyShowIntroUi();
-            setControlsWaitingState(false);
-        }
+        
+        actuallyShowIntroUi();
     }
     
-    // Decidir si iniciar la app directamente o mostrar el prompt
-    if (window.getComputedStyle(mobilePrompt).display === 'none') {
-        appContainer.style.display = 'block';
-        initializeApp();
-        appInitialized = true;
+    // --- LÓGICA DE ARRANQUE ---
+    // Decidir si iniciar la carga o mostrar el prompt de móvil
+    // Usamos una comprobación más robusta para dispositivos táctiles/móviles
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (window.innerWidth < 1025);
+
+    if (isMobile) {
+        if (mobilePrompt) mobilePrompt.style.display = 'flex';
+        if (loadingOverlay) loadingOverlay.style.display = 'none';
+        if (appContainer) appContainer.style.display = 'none';
+    } else {
+        // En escritorio, iniciamos la carga directamente
+        if(mobilePrompt) mobilePrompt.style.display = 'none';
+        preloadAllAssets().then(() => {
+            startExperience();
+            appInitialized = true;
+        });
     }
 });

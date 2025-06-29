@@ -24,6 +24,9 @@ html, body {
     left: 50%;
     overflow: hidden;
     transform-origin: center center;
+    /* --- INICIO DEL CAMBIO: Oculto por defecto, JS lo muestra --- */
+    display: none;
+    /* --- FIN DEL CAMBIO --- */
 }
 
 /* --- Capas de Video --- */
@@ -733,7 +736,8 @@ html, body {
     transform: scale(1.05);
 }
 
-/* === INICIO DE CAMBIOS: ESTILOS PARA MÓVILES === */
+/* === INICIO DE CAMBIOS: ESTILOS PARA LA PANTALLA DE CARGA Y MÓVILES === */
+#loading-overlay,
 #mobile-fullscreen-prompt {
     display: flex;
     position: fixed;
@@ -748,10 +752,19 @@ html, body {
     justify-content: center;
     align-items: center;
     text-align: center;
+    transition: opacity 0.5s ease-out, visibility 0s linear 0.5s;
 }
 
-#app-container {
-    display: none; /* Oculto por defecto, JS lo mostrará */
+#loading-overlay.hidden,
+#mobile-fullscreen-prompt.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* Ocultar el prompt móvil por defecto en escritorio */
+#mobile-fullscreen-prompt {
+    display: none;
 }
 
 .prompt-content {
@@ -774,6 +787,30 @@ html, body {
     margin-right: auto;
 }
 
+#progress-bar-container {
+    width: 80%;
+    max-width: 400px;
+    height: 8px;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    margin: 0 auto 15px;
+    overflow: hidden;
+}
+
+#progress-bar {
+    width: 0%;
+    height: 100%;
+    background-color: #fff;
+    border-radius: 4px;
+    transition: width 0.4s ease-out;
+}
+
+#progress-text {
+    font-size: 1rem;
+    margin-top: 10px;
+    font-weight: bold;
+}
+
 #enter-fullscreen-button {
     font-family: 'Onest', sans-serif;
     background-color: #fff;
@@ -788,10 +825,19 @@ html, body {
     letter-spacing: 1px;
 }
 
-/* Ocultar el prompt en pantallas de escritorio */
+/* En pantallas de escritorio, el prompt móvil no se muestra, pero el de carga sí */
 @media (min-width: 1025px) {
     #mobile-fullscreen-prompt {
-        display: none;
+        display: none !important;
     }
 }
-/* === FIN DE CAMBIOS: ESTILOS PARA MÓVILES === */
+/* En pantallas móviles, el prompt de carga se oculta si el prompt de fullscreen es necesario */
+@media (max-width: 1024px) {
+    body:not(.fullscreen) #loading-overlay {
+        display: none;
+    }
+    body:not(.fullscreen) #mobile-fullscreen-prompt {
+        display: flex;
+    }
+}
+/* === FIN DE CAMBIOS === */

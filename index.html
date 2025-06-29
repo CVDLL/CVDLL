@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infografía Animada Las Lajas</title>
+    <title>CARTILLA INFOGRÁFICA DIGITAL</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,7 +13,21 @@
 </head>
 <body>
 
-<!-- === INICIO DEL CAMBIO: SUPERPOSICIÓN PARA MÓVILES === -->
+<!-- === INICIO DEL CAMBIO: SUPERPOSICIÓN DE CARGA INICIAL === -->
+<div id="loading-overlay">
+    <div class="prompt-content">
+        <h1>Una vista del patrimonio cultural</h1>
+        <p>Cargando la experiencia inmersiva. Por favor, espere...</p>
+        <div id="progress-bar-container">
+            <div id="progress-bar"></div>
+        </div>
+        <p id="progress-text">0%</p>
+    </div>
+</div>
+<!-- === FIN DEL CAMBIO === -->
+
+
+<!-- === SUPERPOSICIÓN PARA MÓVILES === -->
 <div id="mobile-fullscreen-prompt">
     <div class="prompt-content">
         <h1>Bienvenido</h1>
@@ -21,9 +35,9 @@
         <button id="enter-fullscreen-button">ENTRAR</button>
     </div>
 </div>
-<!-- === FIN DEL CAMBIO === -->
 
 <div id="app-container">
+    <!-- El resto de tu app-container no cambia... -->
     <!-- Capas de Video -->
     <div id="intro-video-layer" class="video-layer active">
         <video autoplay muted playsinline loop class="fullscreen-video" id="intro-video-element">
