@@ -39,7 +39,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleChristmasLightButton = document.getElementById('toggle-christmas-light-button');
     const slide2ControlsContainer = document.querySelector('.slide2-controls-container');
     const speechBubble = document.getElementById('speech-bubble');
-
+    const creditsImage = document.getElementById('credits-image');
+    
     // --- Variables de Estado ---
     let currentSceneVideoElement = introVideoElement;
     let currentUiLayer = introLayer;
@@ -730,13 +731,16 @@ document.addEventListener('DOMContentLoaded', () => {
         overlayImageLayer.classList.remove('hiding');
         introContentWrapper.classList.remove('visible');
         introDisclaimer.classList.remove('visible');
+        if (creditsImage) creditsImage.classList.remove('visible');
         void introContentWrapper.offsetWidth;
         void introDisclaimer.offsetWidth;
         void overlayImageLayer.offsetWidth;
+        if (creditsImage) void creditsImage.offsetWidth;
         setTimeout(() => {
             overlayImageLayer.classList.add('visible');
             introContentWrapper.classList.add('visible');
             introDisclaimer.classList.add('visible');
+            if (creditsImage) creditsImage.classList.add('visible');
         }, 50);
 
         setControlsWaitingState(false);
@@ -887,6 +891,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             introContentWrapper.classList.remove('visible');
             introDisclaimer.classList.remove('visible');
+            if (creditsImage) creditsImage.classList.remove('visible');
             transitionToState({ type: 'INTRO_TO_MENU_WITH_VIDEO_SEQUENCE' });
         }, 200);
     });
@@ -985,21 +990,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- FUNCIÓN DE INICIO PRINCIPAL (MODIFICADA) ---
     function startExperience() {
-        if(appContainer) appContainer.style.display = 'block';
-        scaleAndCenterApp();
+        if (appContainer) appContainer.style.display = 'block';
         window.addEventListener('resize', scaleAndCenterApp);
 
-        uiOverlayLayer.classList.remove('active');
-        menuVideoLayer.classList.remove('active');
-        slideVideoLayer.classList.remove('active');
-        transitionVideoLayer.classList.remove('active');
-        ensureNoActiveSlideElements();
-        menuBackToIntroButton.style.display = 'none';
-        staticFrameImage.classList.remove('blurred');
-        overlayImageLayer.classList.remove('visible');
-        overlayImageLayer.classList.remove('hiding');
-        
-        actuallyShowIntroUi();
+        // ================== INICIO DEL AJUSTE PARA MÓVILES ==================
+        // En móviles, después de entrar en pantalla completa, el navegador necesita un 
+        // breve momento para estabilizarse y reportar las dimensiones correctas.
+        // Un pequeño retraso asegura que el escalado y la reproducción del video
+        // se inicien cuando la vista esté completamente lista.
+        setTimeout(() => {
+            // 1. Ahora escalamos la app DENTRO del timeout, con las dimensiones correctas.
+            scaleAndCenterApp();
+
+            // 2. Ejecutamos el resto de la inicialización aquí.
+            uiOverlayLayer.classList.remove('active');
+            menuVideoLayer.classList.remove('active');
+            slideVideoLayer.classList.remove('active');
+            transitionVideoLayer.classList.remove('active');
+            ensureNoActiveSlideElements();
+            menuBackToIntroButton.style.display = 'none';
+            staticFrameImage.classList.remove('blurred');
+            overlayImageLayer.classList.remove('visible');
+            overlayImageLayer.classList.remove('hiding');
+
+            // 3. Mostramos la intro, lo que iniciará la reproducción del video.
+            actuallyShowIntroUi();
+
+        }, 100); // 100ms es un valor seguro y robusto.
+        // =================== FIN DEL AJUSTE PARA MÓVILES ====================
     }
     
     // --- LÓGICA DE ARRANQUE ---
